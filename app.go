@@ -2,13 +2,40 @@ package server
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
 	"github.com/jbochi/facts/vectormodel"
 	"github.com/kshedden/gonpy"
+	"google.golang.org/appengine"
+	"google.golang.org/appengine/urlfetch"
+)
+
+var (
+	gitHubClientID     = os.Getenv("GITHUB_CLIENT_ID")
+	gitHubClientSecret = os.Getenv("GITHUB_CLIENT_SECRET")
+)
+
+const (
+	gitHubAccessTokenURL = "https://github.com/login/oauth/access_token"
+	homeTemplate         = `<html>
+	<head>
+	</head>
+	<body>
+		<p>
+			Well, hello there! To generate recommendations just for you, I need to get all the beautiful stars you gave.
+		</p>
+		<p>
+			We're going to now talk to the GitHub API. Ready?
+			<a href="https://github.com/login/oauth/authorize?scope=user:email&client_id={{.ClientID}}">Click here</a> to begin!</a>
+		</p>
+	</body>
+	</html>`
 )
 
 type (
@@ -23,6 +50,17 @@ type (
 	RepositoryScore struct {
 		repository string
 		score      float64
+	}
+
+	homeTemplateVars struct {
+		ClientID string
+	}
+
+	gitHubAccessTokenResponse struct {
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description"`
+		ErrorURI         string `json:"error_uri"`
+		AccessToken      string `json:"access_token"`
 	}
 )
 
@@ -113,21 +151,75 @@ func init() {
 		panic("Something went wrong")
 	}
 
-	http.HandleFunc("/", handler)
+	http.HandleFunc("/", home)
+	http.HandleFunc("/callback", callback)
+	http.HandleFunc("/recommendations", recommendations)
+
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func home(w http.ResponseWriter, r *http.Request) {
+	vars := homeTemplateVars{ClientID: gitHubClientID}
+	t := template.Must(template.New("home").Parse(homeTemplate))
+	t.Execute(w, vars)
+}
+
+func recommendations(w http.ResponseWriter, r *http.Request) {
 	if model == nil {
-		fmt.Fprint(w, "model was not initialized")
+		http.Error(w, "model was not initialized", http.StatusInternalServerError)
 		return
 	}
 
 	repositories := []string{"tensorflow/tensorflow"}
 	recs, err := model.Recommend(repositories, 10)
 	if err != nil {
-		fmt.Fprintf(w, "Failed: %v", err)
+		http.Error(w, fmt.Sprintf("Failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	fmt.Fprintf(w, "GitHub Recs: %v", recs)
+}
+
+func callback(w http.ResponseWriter, r *http.Request) {
+
+	// create request to get token
+	sessionCode := r.FormValue("code")
+	ctx := appengine.NewContext(r)
+	client := urlfetch.Client(ctx)
+	values := url.Values{
+		"client_id":     []string{gitHubClientID},
+		"client_secret": []string{gitHubClientSecret},
+		"code":          []string{sessionCode},
+	}
+	body := values.Encode()
+
+	req, err := http.NewRequest("POST", gitHubAccessTokenURL, strings.NewReader(body))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	// issue request
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		fmt.Fprintf(w, "Something went wrong! %v", err)
+		return
+	}
+
+	// extract the token and granted scopes
+	var result gitHubAccessTokenResponse
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if result.Error != "" {
+		http.Error(w, result.Error, http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Fprintf(w, "Token: %v", result.AccessToken)
 }
