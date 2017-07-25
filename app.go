@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jbochi/facts/vectormodel"
 	"github.com/kshedden/gonpy"
@@ -22,17 +23,25 @@ var (
 )
 
 const (
-	gitHubAccessTokenURL = "https://github.com/login/oauth/access_token"
-	homeTemplate         = `<html>
+	gitHubAuthenticatedUserURL = "https://api.github.com/user"
+	gitHubStarredURL           = "https://api.github.com/user/starred"
+	gitHubAccessTokenURL       = "https://github.com/login/oauth/access_token"
+	homeTemplate               = `<html>
 	<head>
 	</head>
 	<body>
+		<h1>GitHub Repository Recommender</h1>
 		<p>
 			Well, hello there! To generate recommendations just for you, I need to get all the beautiful stars you gave.
 		</p>
+		{{ if .Err }}
+		<p>
+			I tried to get them, but something went wrong: <b>{{.Err}}</b>
+		</p>
+		{{ end }}
 		<p>
 			We're going to now talk to the GitHub API. Ready?
-			<a href="https://github.com/login/oauth/authorize?scope=user:email&client_id={{.ClientID}}">Click here</a> to begin!</a>
+			<b><a href="https://github.com/login/oauth/authorize?scope=&client_id={{.ClientID}}">Click here</a></b> to begin!</a>
 		</p>
 	</body>
 	</html>`
@@ -54,6 +63,7 @@ type (
 
 	homeTemplateVars struct {
 		ClientID string
+		Err      string
 	}
 
 	gitHubAccessTokenResponse struct {
@@ -61,6 +71,16 @@ type (
 		ErrorDescription string `json:"error_description"`
 		ErrorURI         string `json:"error_uri"`
 		AccessToken      string `json:"access_token"`
+		Scope            string `json:"scope"`
+	}
+
+	gitHubUserResponse struct {
+		Error string `json:"error"`
+		User  string `json:"login"`
+	}
+
+	gitHubStarredResponse struct {
+		Repository string `json:"full_name"`
 	}
 )
 
@@ -153,34 +173,129 @@ func init() {
 
 	http.HandleFunc("/", home)
 	http.HandleFunc("/callback", callback)
-	http.HandleFunc("/recommendations", recommendations)
+}
 
+func authenticatedUser(r *http.Request) (string, error) {
+	cookie, _ := r.Cookie("token")
+	if cookie == nil {
+		return "", fmt.Errorf("Unauthorized")
+	}
+	ctx := appengine.NewContext(r)
+	client := urlfetch.Client(ctx)
+	gitHubToken := cookie.Value
+
+	url := gitHubAuthenticatedUserURL + "?access_token=" + gitHubToken
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+
+	if err != nil {
+		return "", err
+	}
+
+	var result gitHubUserResponse
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return "", err
+	}
+	if result.Error != "" {
+		return "", fmt.Errorf("Error from GitHub: %s", result.Error)
+	}
+
+	return result.User, nil
+}
+
+func starred(r *http.Request) (stars []string, err error) {
+	cookie, _ := r.Cookie("token")
+	if cookie == nil {
+		return stars, fmt.Errorf("Unauthorized")
+	}
+	ctx := appengine.NewContext(r)
+	client := urlfetch.Client(ctx)
+	gitHubToken := cookie.Value
+
+	url := gitHubStarredURL + "?access_token=" + gitHubToken
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return stars, err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+
+	if err != nil {
+		return stars, err
+	}
+
+	var result []gitHubStarredResponse
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return stars, err
+	}
+
+	for _, r := range result {
+		stars = append(stars, r.Repository)
+	}
+
+	return stars, err
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
-	vars := homeTemplateVars{ClientID: gitHubClientID}
-	t := template.Must(template.New("home").Parse(homeTemplate))
-	t.Execute(w, vars)
-}
+	var stars []string
+	user, err := authenticatedUser(r)
+	if err == nil {
+		stars, err = starred(r)
+	}
 
-func recommendations(w http.ResponseWriter, r *http.Request) {
+	if err != nil {
+		vars := homeTemplateVars{ClientID: gitHubClientID, Err: err.Error()}
+		if vars.Err == "Unauthorized" {
+			vars.Err = ""
+		}
+		t := template.Must(template.New("home").Parse(homeTemplate))
+		t.Execute(w, vars)
+		return
+	}
+
+	fmt.Fprint(w, "<html><body><h1>GitHub Repository Recommender</h1><p>Hey! I know you! <b>")
+	fmt.Fprint(w, user)
+	fmt.Fprint(w, "</b>, isn't it?</p>")
+
+	if len(stars) == 0 {
+		fmt.Fprint(w, "<p>Sorry, I can't recommend because you have not starred any repos.</p>")
+		return
+	}
+
 	if model == nil {
 		http.Error(w, "model was not initialized", http.StatusInternalServerError)
 		return
 	}
 
-	repositories := []string{"tensorflow/tensorflow"}
-	recs, err := model.Recommend(repositories, 10)
+	recs, err := model.Recommend(stars, 10)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Fprintf(w, "GitHub Recs: %v", recs)
+	fmt.Fprint(w, "<h2>GitHub Recs:</h2><ul>")
+	for _, rec := range recs {
+		fmt.Fprintf(w, "<li><a href=\"https://github.com/%s\">%s</a> (%f)</li>",
+			rec.repository, rec.repository, rec.score)
+	}
+	fmt.Fprint(w, "</ul>")
+
+	fmt.Fprint(w, "<h2>You starred:</h2><ul>")
+	for _, star := range stars {
+		fmt.Fprintf(w, "<li><a href=\"https://github.com/%s\">%s</a></li>", star, star)
+	}
+	fmt.Fprintf(w, "</ul>")
+
+	fmt.Fprint(w, "</body></html>")
 }
 
 func callback(w http.ResponseWriter, r *http.Request) {
-
 	// create request to get token
 	sessionCode := r.FormValue("code")
 	ctx := appengine.NewContext(r)
@@ -221,5 +336,10 @@ func callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Fprintf(w, "Token: %v", result.AccessToken)
+	expiration := time.Now().Add(10 * time.Minute)
+	cookie := http.Cookie{Name: "token", Value: result.AccessToken, Expires: expiration}
+	http.SetCookie(w, &cookie)
+
+	fmt.Fprintf(w, "Get your cookie: %v\n", result.AccessToken)
+	fmt.Fprintf(w, "Thanks for: %v\n", result.Scope)
 }
