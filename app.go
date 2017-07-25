@@ -175,29 +175,38 @@ func init() {
 	http.HandleFunc("/callback", callback)
 }
 
-func authenticatedUser(r *http.Request) (string, error) {
+func gitHubAuthenticatedRequest(r *http.Request, url string, result interface{}) error {
 	cookie, _ := r.Cookie("token")
 	if cookie == nil {
-		return "", fmt.Errorf("Unauthorized")
+		return fmt.Errorf("Unauthorized")
 	}
 	ctx := appengine.NewContext(r)
 	client := urlfetch.Client(ctx)
 	gitHubToken := cookie.Value
 
-	url := gitHubAuthenticatedUserURL + "?access_token=" + gitHubToken
-	req, err := http.NewRequest("GET", url, nil)
+	fullUrl := url + "?access_token=" + gitHubToken
+	req, err := http.NewRequest("GET", fullUrl, nil)
 	if err != nil {
-		return "", err
+		return err
 	}
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 
 	if err != nil {
-		return "", err
+		return err
 	}
 
+	err = json.NewDecoder(resp.Body).Decode(result)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func authenticatedUser(r *http.Request) (string, error) {
 	var result gitHubUserResponse
-	err = json.NewDecoder(resp.Body).Decode(&result)
+	err := gitHubAuthenticatedRequest(r, gitHubAuthenticatedUserURL, &result)
 	if err != nil {
 		return "", err
 	}
@@ -209,28 +218,8 @@ func authenticatedUser(r *http.Request) (string, error) {
 }
 
 func starred(r *http.Request) (stars []string, err error) {
-	cookie, _ := r.Cookie("token")
-	if cookie == nil {
-		return stars, fmt.Errorf("Unauthorized")
-	}
-	ctx := appengine.NewContext(r)
-	client := urlfetch.Client(ctx)
-	gitHubToken := cookie.Value
-
-	url := gitHubStarredURL + "?access_token=" + gitHubToken
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return stars, err
-	}
-	req.Header.Set("Accept", "application/json")
-	resp, err := client.Do(req)
-
-	if err != nil {
-		return stars, err
-	}
-
 	var result []gitHubStarredResponse
-	err = json.NewDecoder(resp.Body).Decode(&result)
+	err = gitHubAuthenticatedRequest(r, gitHubStarredURL, &result)
 	if err != nil {
 		return stars, err
 	}
