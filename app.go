@@ -27,8 +27,7 @@ const (
 	gitHubStarredURL           = "https://api.github.com/user/starred"
 	gitHubAccessTokenURL       = "https://github.com/login/oauth/access_token"
 	homeTemplate               = `<html>
-	<head>
-	</head>
+	<head></head>
 	<body>
 		<h1>GitHub Repository Recommender</h1>
 		<p>
@@ -45,6 +44,33 @@ const (
 		</p>
 	</body>
 	</html>`
+	recommendationsTemplate = `<html>
+	<head></head>
+	<body>
+		<h1>GitHub Repository Recommender</h1>
+		<p>Hey! I know you! <b>{{.User}}</b>, isn't it?</p>
+		{{ if .Stars }}
+			<h2>GitHub Recs:</h2>
+				<ul>
+					{{ range $index, $rec := .Recs }}
+						<li>
+							<a href="https://github.com/{{ $rec.Repository }}">
+								{{ $rec.Repository }}</a>
+							({{printf "%.2f" $rec.Score}})
+						</li>
+					{{ end }}
+				</ul>
+			<h2>You starred:</h2>
+				<ul>
+					{{ range $index, $repo := .Stars }}
+						<li><a href="https://github.com/{{ $repo }}">{{ $repo }}</a></li>
+					{{ end }}
+				</ul>
+		{{ else }}
+			<p>Sorry, I can't recommend because you have not starred any repos.</p>
+		{{ end }}
+	</body>
+	</html>`
 )
 
 type (
@@ -57,13 +83,19 @@ type (
 
 	// RepositoryScore is a pair of repo / score
 	RepositoryScore struct {
-		repository string
-		score      float64
+		Repository string
+		Score      float64
 	}
 
 	homeTemplateVars struct {
 		ClientID string
 		Err      string
+	}
+
+	recommendationsTemplateVars struct {
+		User  string
+		Stars []string
+		Recs  []RepositoryScore
 	}
 
 	gitHubAccessTokenResponse struct {
@@ -184,8 +216,8 @@ func gitHubAuthenticatedRequest(r *http.Request, url string, result interface{})
 	client := urlfetch.Client(ctx)
 	gitHubToken := cookie.Value
 
-	fullUrl := url + "?access_token=" + gitHubToken
-	req, err := http.NewRequest("GET", fullUrl, nil)
+	fullURL := url + "?access_token=" + gitHubToken
+	req, err := http.NewRequest("GET", fullURL, nil)
 	if err != nil {
 		return err
 	}
@@ -248,14 +280,11 @@ func home(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Fprint(w, "<html><body><h1>GitHub Repository Recommender</h1><p>Hey! I know you! <b>")
-	fmt.Fprint(w, user)
-	fmt.Fprint(w, "</b>, isn't it?</p>")
+	vars := recommendationsTemplateVars{}
+	vars.User = user
+	vars.Stars = stars
 
-	if len(stars) == 0 {
-		fmt.Fprint(w, "<p>Sorry, I can't recommend because you have not starred any repos.</p>")
-		return
-	}
+	t := template.Must(template.New("recommendations").Parse(recommendationsTemplate))
 
 	if model == nil {
 		http.Error(w, "model was not initialized", http.StatusInternalServerError)
@@ -267,21 +296,13 @@ func home(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed: %v", err), http.StatusInternalServerError)
 		return
 	}
+	vars.Recs = recs
 
-	fmt.Fprint(w, "<h2>GitHub Recs:</h2><ul>")
-	for _, rec := range recs {
-		fmt.Fprintf(w, "<li><a href=\"https://github.com/%s\">%s</a> (%f)</li>",
-			rec.repository, rec.repository, rec.score)
+	err = t.Execute(w, vars)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Template execution failed: %v", err), http.StatusInternalServerError)
+		return
 	}
-	fmt.Fprint(w, "</ul>")
-
-	fmt.Fprint(w, "<h2>You starred:</h2><ul>")
-	for _, star := range stars {
-		fmt.Fprintf(w, "<li><a href=\"https://github.com/%s\">%s</a></li>", star, star)
-	}
-	fmt.Fprintf(w, "</ul>")
-
-	fmt.Fprint(w, "</body></html>")
 }
 
 func callback(w http.ResponseWriter, r *http.Request) {
