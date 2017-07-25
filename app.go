@@ -339,7 +339,5 @@ func callback(w http.ResponseWriter, r *http.Request) {
 	expiration := time.Now().Add(10 * time.Minute)
 	cookie := http.Cookie{Name: "token", Value: result.AccessToken, Expires: expiration}
 	http.SetCookie(w, &cookie)
-
-	fmt.Fprintf(w, "Get your cookie: %v\n", result.AccessToken)
-	fmt.Fprintf(w, "Thanks for: %v\n", result.Scope)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
