@@ -14,12 +14,14 @@ import (
 	"github.com/jbochi/facts/vectormodel"
 	"github.com/kshedden/gonpy"
 	"google.golang.org/appengine"
+	"google.golang.org/appengine/log"
 	"google.golang.org/appengine/urlfetch"
 )
 
 var (
 	gitHubClientID     = os.Getenv("GITHUB_CLIENT_ID")
 	gitHubClientSecret = os.Getenv("GITHUB_CLIENT_SECRET")
+	tpl                = template.Must(template.ParseGlob("./templates/*.html"))
 )
 
 const (
@@ -71,7 +73,6 @@ type (
 	}
 )
 
-var tmpl *template.Template
 var model *Model
 
 // ReadModel returns a VectorModel from given file path
@@ -152,8 +153,6 @@ func init() {
 	var err error
 	model, err = ReadModel("./data/")
 
-	tmpl = template.Must(template.New("home").ParseGlob("./templates/*.tmpl"))
-
 	if err != nil {
 		panic(fmt.Sprintf("Failed to create vector model %s", err))
 	}
@@ -223,6 +222,8 @@ func starred(r *http.Request) (stars []string, err error) {
 
 func home(w http.ResponseWriter, r *http.Request) {
 	var stars []string
+	ctx := appengine.NewContext(r)
+
 	user, err := authenticatedUser(r)
 	if err == nil {
 		stars, err = starred(r)
@@ -233,7 +234,10 @@ func home(w http.ResponseWriter, r *http.Request) {
 		if vars.Err == "Unauthorized" {
 			vars.Err = ""
 		}
-		tmpl.ExecuteTemplate(w, "home.tmpl", vars)
+		if err = tpl.ExecuteTemplate(w, "home.html", vars); err != nil {
+			log.Errorf(ctx, "%v", err)
+			http.Error(w, "template execution failed", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -253,10 +257,9 @@ func home(w http.ResponseWriter, r *http.Request) {
 	}
 	vars.Recs = recs
 
-	err = tmpl.ExecuteTemplate(w, "recommendations.tmpl", vars)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Template execution failed: %v", err), http.StatusInternalServerError)
-		return
+	if err := tpl.ExecuteTemplate(w, "recommendations.html", vars); err != nil {
+		log.Errorf(ctx, "%v", err)
+		http.Error(w, "template execution failed", http.StatusInternalServerError)
 	}
 }
 
