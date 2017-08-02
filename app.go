@@ -26,51 +26,6 @@ const (
 	gitHubAuthenticatedUserURL = "https://api.github.com/user"
 	gitHubStarredURL           = "https://api.github.com/user/starred"
 	gitHubAccessTokenURL       = "https://github.com/login/oauth/access_token"
-	homeTemplate               = `<html>
-	<head></head>
-	<body>
-		<h1>GitHub Repository Recommender</h1>
-		<p>
-			Well, hello there! To generate recommendations just for you, I need to get all the beautiful stars you gave.
-		</p>
-		{{ if .Err }}
-		<p>
-			I tried to get them, but something went wrong: <b>{{.Err}}</b>
-		</p>
-		{{ end }}
-		<p>
-			We're going to now talk to the GitHub API. Ready?
-			<b><a href="https://github.com/login/oauth/authorize?scope=&client_id={{.ClientID}}">Click here</a></b> to begin!</a>
-		</p>
-	</body>
-	</html>`
-	recommendationsTemplate = `<html>
-	<head></head>
-	<body>
-		<h1>GitHub Repository Recommender</h1>
-		<p>Hey! I know you! <b>{{.User}}</b>, isn't it?</p>
-		{{ if .Stars }}
-			<h2>GitHub Recs:</h2>
-				<ul>
-					{{ range $index, $rec := .Recs }}
-						<li>
-							<a href="https://github.com/{{ $rec.Repository }}">
-								{{ $rec.Repository }}</a>
-							({{printf "%.2f" $rec.Score}})
-						</li>
-					{{ end }}
-				</ul>
-			<h2>You starred:</h2>
-				<ul>
-					{{ range $index, $repo := .Stars }}
-						<li><a href="https://github.com/{{ $repo }}">{{ $repo }}</a></li>
-					{{ end }}
-				</ul>
-		{{ else }}
-			<p>Sorry, I can't recommend because you have not starred any repos.</p>
-		{{ end }}
-	</body>
-	</html>`
 )
 
 type (
@@ -116,6 +71,7 @@ type (
 	}
 )
 
+var tmpl *template.Template
 var model *Model
 
 // ReadModel returns a VectorModel from given file path
@@ -196,6 +152,8 @@ func init() {
 	var err error
 	model, err = ReadModel("./data/")
 
+	tmpl = template.Must(template.New("home").ParseGlob("./templates/*.tmpl"))
+
 	if err != nil {
 		panic(fmt.Sprintf("Failed to create vector model %s", err))
 	}
@@ -275,16 +233,13 @@ func home(w http.ResponseWriter, r *http.Request) {
 		if vars.Err == "Unauthorized" {
 			vars.Err = ""
 		}
-		t := template.Must(template.New("home").Parse(homeTemplate))
-		t.Execute(w, vars)
+		tmpl.ExecuteTemplate(w, "home.tmpl", vars)
 		return
 	}
 
 	vars := recommendationsTemplateVars{}
 	vars.User = user
 	vars.Stars = stars
-
-	t := template.Must(template.New("recommendations").Parse(recommendationsTemplate))
 
 	if model == nil {
 		http.Error(w, "model was not initialized", http.StatusInternalServerError)
@@ -298,7 +253,7 @@ func home(w http.ResponseWriter, r *http.Request) {
 	}
 	vars.Recs = recs
 
-	err = t.Execute(w, vars)
+	err = tmpl.ExecuteTemplate(w, "recommendations.tmpl", vars)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Template execution failed: %v", err), http.StatusInternalServerError)
 		return

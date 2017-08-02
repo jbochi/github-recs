@@ -1,0 +1,18 @@
+<html>
+<head></head>
+<body>
+  <h1>GitHub Repository Recommender</h1>
+  <p>
+    Well, hello there! To generate recommendations just for you, I need to get all the beautiful stars you gave.
+  </p>
+  {{ if .Err }}
+  <p>
+    I tried to get them, but something went wrong: <b>{{.Err}}</b>
+  </p>
+  {{ end }}
+  <p>
+    We're going to now talk to the GitHub API. Ready?
+    <b><a href="https://github.com/login/oauth/authorize?scope=&client_id={{.ClientID}}">Click here</a></b> to begin!</a>
+  </p>
+</body>
+</html>
