@@ -1,6 +1,8 @@
 package server
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestModel(t *testing.T) {
 	model, err := ReadModel("./data/")
