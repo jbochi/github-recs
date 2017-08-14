@@ -1,7 +1,4 @@
-<html>
-<head></head>
-<body>
-  <h1>GitHub Repository Recommender</h1>
+{{ define "content" -}}
   <p>Hey! I know you! <b>{{.User}}</b>, isn't it?</p>
   {{ if .Stars }}
     <h2>GitHub Recs:</h2>
@@ -23,5 +20,4 @@
   {{ else }}
     <p>Sorry, I can't recommend because you have not starred any repos.</p>
   {{ end }}
-</body>
-</html>
+{{- end }}

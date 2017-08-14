@@ -2,5 +2,13 @@ runtime: go
 api_version: go1.8
 
 handlers:
+- url: /static
+  static_dir: static
+
 - url: /.*
   script: _go_app
+
+
+env_variables:
+  GITHUB_CLIENT_ID: 'CHANGEME'
+  GITHUB_CLIENT_SECRET: 'CHANGEME'

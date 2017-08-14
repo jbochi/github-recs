@@ -24,10 +24,10 @@ const (
 var (
 	gitHubClientID     = os.Getenv("GITHUB_CLIENT_ID")
 	gitHubClientSecret = os.Getenv("GITHUB_CLIENT_SECRET")
-	tpl                = template.Must(template.ParseFiles(
-		"templates/home.html",
-		"templates/recommendations.html",
-	))
+	tpl                = map[string]*template.Template{
+		"home": template.Must(template.ParseFiles("templates/base.html", "templates/home.html")),
+		"recs": template.Must(template.ParseFiles("templates/base.html", "templates/recommendations.html")),
+	}
 	model *Model
 )
 
@@ -143,7 +143,7 @@ func home(w http.ResponseWriter, r *http.Request) {
 		if vars.Err == "Unauthorized" {
 			vars.Err = ""
 		}
-		if err = tpl.ExecuteTemplate(w, "home.html", vars); err != nil {
+		if err = tpl["home"].ExecuteTemplate(w, "base.html", vars); err != nil {
 			log.Errorf(ctx, "%v", err)
 			http.Error(w, "template execution failed", http.StatusInternalServerError)
 		}
@@ -166,7 +166,7 @@ func home(w http.ResponseWriter, r *http.Request) {
 	}
 	vars.Recs = recs
 
-	if err := tpl.ExecuteTemplate(w, "recommendations.html", vars); err != nil {
+	if err := tpl["recs"].ExecuteTemplate(w, "base.html", vars); err != nil {
 		log.Errorf(ctx, "%v", err)
 		http.Error(w, "template execution failed", http.StatusInternalServerError)
 	}
